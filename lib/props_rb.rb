@@ -2,18 +2,21 @@ require "props_rb/version"
 
 require 'awesome_print'
 require 'active_support/core_ext/hash/indifferent_access'
+require 'pry'
+
 module PropsRb
   class Store
     def self.meta_for(key, prototype=nil)
       @meta ||= {}
       # use equal and hash methods to define how things will be cached
-      # puts "meta_for: #{key.inspect}"
+      binding.pry if $destroy
       @meta[key] ||= prototype
       @meta[key] ||= Meta.new
     end
 
     def self.destroy(key)
-      # puts "destroying: #{key.inspect}"
+      $destroy = true
+      puts "destroying: #{key.inspect}"
       @meta ||= {}
       @meta.delete key
     end
