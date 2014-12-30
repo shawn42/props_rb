@@ -65,12 +65,13 @@ describe "Props.rb" do
   describe 'per instance props' do
     it 'can add prop to instance' do
       billy = person_klass.create first_name: "Billy", last_name: "Bob"
-      billy.prop :wah, :first_name do |obj|
+      billy.prop :wah do |obj|
         "#{obj.get(:first_name)} monkey"
-      end#.depends_on(:first_name)
+      end.depends_on(:first_name)
+
       expect(billy.get(:wah)).to eq("Billy monkey")
       billy.set(:first_name, "William")
-      # PropsRb::CacheStore.delete billy.object_id, :wah
+
       expect(billy.get(:wah)).to eq("William monkey")
     end
 

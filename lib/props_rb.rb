@@ -4,6 +4,7 @@ require 'pry'
 
 require_relative "./props_rb/version"
 require_relative "./props_rb/parental_hash"
+require_relative "./props_rb/prop_builder"
 require_relative "./props_rb/stores"
 require_relative "./props_rb/meta"
 require_relative "./props_rb/prop"
@@ -67,18 +68,12 @@ module PropsRb
     props
   end
 
-  def prop(prop_name, *deps, &blk)
+  def prop(prop_name, &blk)
     meta = MetaStore.get(self.object_id)
     CacheStore.delete self.object_id, prop_name
     prop = Prop.new(prop_name, &blk)
     meta.properties[prop_name] = prop
-
-    deps.each do |dep|
-      meta.deps[dep] ||= []
-      meta.deps[dep] << prop_name
-    end
-
-    prop
+    PropBuilder.new(prop, meta)
   end
 
   def set(k,v)
