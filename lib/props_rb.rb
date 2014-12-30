@@ -6,26 +6,26 @@ require 'pry'
 
 module PropsRb
   class Store
-    def self.meta_for(key, prototype=nil)
+    # not liking that the store is class-aware
+    def self.initialize_meta(key)
       @meta ||= {}
-      # use equal and hash methods to define how things will be cached
-      binding.pry if $destroy
-      @meta[key] ||= prototype
-      @meta[key] ||= Meta.new
+      @meta[key] = Meta.new
+    end
+
+    def self.meta_for(key)
+      @meta ||= {}
+      @meta[key]
     end
 
     def self.destroy(key)
-      $destroy = true
-      puts "destroying: #{key.inspect}"
       @meta ||= {}
       @meta.delete key
     end
   end
 
   def initialize_props
-    parent_meta = Store.meta_for(self.class)
-    meta = Store.meta_for(self, parent_meta)
-
+    Store.initialize_meta(self)
+    meta = Store.meta_for self
     props = meta.properties
     props.each do |name, prop|
       deps = prop.deps
@@ -78,7 +78,7 @@ module PropsRb
 
   module SharedMethods
     def prop(prop_name, &blk)
-      meta = Store.meta_for(self)
+      meta = Store.meta_for(self) || Store.initialize_meta(self)
       meta.properties[prop_name] = Prop.new(prop_name, &blk)
       meta.properties[prop_name]
     end
@@ -87,6 +87,7 @@ module PropsRb
   def self.included(klass)
     klass.extend ClassMethods
     klass.include SharedMethods
+    Store.initialize_meta(klass)
   end
 
   module ClassMethods
@@ -136,62 +137,4 @@ module PropsRb
     end
   end
 end
-
-module HashByGuid
-  # TODO move to PropsRb#props_equal?
-  def equal?(other)
-    # puts "EQ: #{self.inspect} : #{other.inspect}"
-    meta = PropsRb::Store.meta_for self
-    other_meta = PropsRb::Store.meta_for other
-
-    return meta.values == other_meta.values
-  end
-
-  def hash
-    get('guid') || super
-  end
-end
-
-if $0 == __FILE__
-  class Person
-    include HashByGuid
-    include PropsRb
-    prop :first_name
-    prop :last_name
-
-    prop :full_name do |obj|
-      "#{obj.get(:first_name)} #{obj.get(:last_name)}"
-    end.depends_on(:first_name, :last_name)
-
-    def initialize
-      initialize_props
-    end
-  end
-
-  person = Person.create first_name: "Billy", last_name: "Bob", guid: 8
-  p person.get(:full_name)
-  person.set(:first_name, "Darth")
-  person.set(:last_name, "Vader")
-  p person.get(:full_name)
-  p person.get('full_name')
-
-  person.prop :wah do |obj|
-    "#{obj.get(:first_name)} monkey"
-  end.depends_on(:first_name)
-
-  p person.get(:wah)
-
-  ap PropsRb::Store.instance_variable_get('@meta').keys
-  person.destroy
-  ap PropsRb::Store.instance_variable_get('@meta').keys
-  # TODO 
-  # make something.another.foo work? (may need to switch to Signals for that)
-
-end
-
-
-
-
-
-
 
