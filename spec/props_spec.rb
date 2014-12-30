@@ -1,4 +1,5 @@
-require_relative '../lib/props_rb'
+require_relative '../lib/test'
+# require_relative '../lib/props_rb'
 
 describe "Props.rb" do
   let(:person_klass) { Class.new do
@@ -33,9 +34,12 @@ describe "Props.rb" do
         end.depends_on(:first_name, :last_name)
       end }
 
-    let(:sub_klass) { Class.new(person_klass) }
+    let(:sub_klass) { Class.new(person_klass) do
+      include PropsRb
+    end}
 
     let(:override_klass) { Class.new(person_klass) do
+        include PropsRb
         prop :middle_name
         prop :full_name do |obj|
         "#{obj.get(:first_name)} #{obj.get(:middle_name)} #{obj.get(:last_name)}"
@@ -67,6 +71,7 @@ describe "Props.rb" do
       end.depends_on(:first_name)
       expect(billy.get(:wah)).to eq("Billy monkey")
       billy.set(:first_name, "William")
+      CacheStore.delete billy.object_id, :wah
       expect(billy.get(:wah)).to eq("William monkey")
     end
 

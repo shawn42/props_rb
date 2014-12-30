@@ -15,6 +15,21 @@ class ParentalHash
   def []=(k,v)
     @_hash[k] = v
   end
+
+  def keys
+    ks = @_hash.keys
+    if @parent
+      ks | @parent.keys 
+    else
+      ks
+    end
+  end
+
+  def each
+    keys.each do |k|
+      yield k, self[k]
+    end
+  end
 end
 
 class Prop
@@ -37,10 +52,9 @@ class Prop
     self
   end
 
-  # def deps
-  #   binding.pry
-  #   @dep_names || []
-  # end
+  def deps
+    @dep_names || []
+  end
 end
 
 class Meta
@@ -69,31 +83,45 @@ class DataStore
     @data[id] ||= {}
     @data[id][k]
   end
+
+  def self.delete(id, k=nil)
+    @data ||= {}
+    if k
+      @data[id] ||= {}
+      @data[id].delete k
+    else
+      @data.delete id
+    end
+  end
 end
 
 class CacheStore
   def self.has_key?(id, k)
     @data ||= {}
     @data[id] ||= {}
-    @data[id].has_key? k
+    @data[id].has_key? k.to_sym
   end
 
-  def self.delete(id, k)
+  def self.delete(id, k=nil)
     @data ||= {}
-    @data[id] ||= {}
-    @data[id].delete k
+    if k
+      @data[id] ||= {}
+      @data[id].delete k.to_sym
+    else
+      @data.delete id
+    end
   end
 
   def self.set(id, k, v)
     @data ||= {}
     @data[id] ||= {}
-    @data[id][k] = v
+    @data[id][k.to_sym] = v
   end
   
   def self.get(id, k)
     @data ||= {}
     @data[id] ||= {}
-    @data[id][k]
+    @data[id][k.to_sym]
   end
 end
 
@@ -107,14 +135,88 @@ class MetaStore
     @data ||= {}
     @data[k]
   end
+
+  def self.delete(id, k=nil)
+    @data ||= {}
+    if k
+      @data[id] ||= {}
+      @data[id].delete k
+    else
+      @data.delete id
+    end
+  end
 end
 
 module PropsRb
+  module ClassMethods
+    def prop(prop_name, &blk)
+      parents = ancestors.select{|a|a.is_a? Class}
+      propped_klass = parents.find do |parent_klass|
+        MetaStore.get parent_klass
+      end
+      meta = MetaStore.get(propped_klass)
+
+      if $VERBOSE
+        warn "TODO raise error if meta not found"
+        warn "TODO: clear all instances cache for [#{prop_name}]"
+      end
+      meta.properties[prop_name] = Prop.new(prop_name, &blk)
+      meta.properties[prop_name]
+    end
+
+    def create(initial_props={})
+      object = self.new
+      object.initialize_props
+      initial_props.each do |name, value|
+        object.set(name, value)
+      end
+      object
+    end
+
+    def destroy
+      DataStore.delete self.object_id
+      CacheStore.delete self.object_id
+      MetaStore.delete self.object_id
+    end
+  end
+
+  def self.included(klass)
+    klass.extend ClassMethods
+    parents = klass.ancestors.select{|a|a.is_a? Class}[1..-1]
+    propped_klass = parents.find do |parent_klass|
+      MetaStore.get(parent_klass)
+    end
+    parent_meta = MetaStore.get(propped_klass)
+    meta = Meta.new parent_meta
+    MetaStore.set(klass, meta)
+  end
+
+  def initialize_props
+    meta = Meta.new(MetaStore.get(self.class))
+    MetaStore.set(self.object_id, meta)
+    props = meta.properties
+    props.each do |name, prop|
+      deps = prop.deps
+      deps.each do |dep|
+        meta.deps[dep] ||= []
+        meta.deps[dep] << name
+      end
+    end
+    props
+  end
+
+  def prop(prop_name, &blk)
+    meta = MetaStore.get(self.object_id)
+    CacheStore.delete self.object_id, prop_name
+    meta.properties[prop_name] = Prop.new(prop_name, &blk)
+    meta.properties[prop_name]
+  end
+
   def set(k,v)
     DataStore.set(self.object_id, k, v)
     CacheStore.set(self.object_id, k, v)
 
-    meta = MetaStore.get(self) || MetaStore.get(self.class)
+    meta = MetaStore.get(self.object_id) || MetaStore.get(self.class)
     deps = meta.deps[k]
     if deps
       deps.each do |dep|
@@ -131,9 +233,9 @@ module PropsRb
       return CacheStore.get(self.object_id, k)
     end
 
-    meta = MetaStore.get(self) || MetaStore.get(self.class)
+    meta = MetaStore.get(self.object_id) || MetaStore.get(self.class)
     property_meta = meta.properties[k]
-    binding.pry if property_meta && !property_meta.respond_to?(:computed?)
+    binding.pry if !property_meta.respond_to?(:computed?)
     val = if property_meta.computed?
       property_meta.compute self
     else
@@ -145,56 +247,42 @@ module PropsRb
   end
 end
 
-class Person
-  include PropsRb
-#   prop :first_name
-#   prop :last_name
-#
-#   prop :full_name do |obj|
-#   "#{obj.get(:first_name)} #{obj.get(:last_name)}"
-#   end.depends_on(:first_name, :last_name)
+if $0 == __FILE__
+  class Person
+    include PropsRb
+    prop :first_name
+    prop :last_name
+
+    prop :full_name do |obj|
+    "#{obj.get(:first_name)} #{obj.get(:last_name)}"
+    end.depends_on(:first_name, :last_name)
+  end
+
+  class TitledPerson < Person
+    include PropsRb
+    prop :title
+  end
+
+  # when Person is extended, setup Meta
+  titled_meta = MetaStore.get(TitledPerson)
+
+  bill = TitledPerson.create first_name: "Billy"
+  bill.set(:last_name, "Bob")
+  bill.set(:title, "Mr")
+  p bill.get(:title)
+  p bill.get(:full_name)
+
+  bill.prop :full_name do |obj|
+    "#{obj.get(:title)} #{obj.get(:first_name)} #{obj.get(:last_name)}"
+  end.depends_on :title, :first_name, :last_name
+
+
+  bill.set(:title, "Dr")
+  p bill.get(:full_name)
+
+  # add prop cache, bust for monkey patching
+  # serialization?
 end
-
-class TitledPerson < Person
-end
-
-person_meta = Meta.new
-person_meta.properties[:first_name] = Prop.new(:first_name)
-person_meta.properties[:last_name] = Prop.new(:last_name)
-person_meta.properties[:full_name] = Prop.new :full_name do |obj|
-  "#{obj.get(:first_name)} #{obj.get(:last_name)}"
-end
-MetaStore.set(Person, person_meta)
-
-titled_meta = Meta.new(person_meta)
-titled_meta.properties[:title] = Prop.new :title
-MetaStore.set(TitledPerson, titled_meta)
-
-bill = TitledPerson.new
-bill.set(:first_name, "Billy")
-bill.set(:last_name, "Bob")
-bill.set(:title, "Mr")
-p bill.get(:title)
-p bill.get(:full_name)
-
-bill_meta = Meta.new(titled_meta)
-bill_meta.properties[:full_name] = Prop.new :full_name do |obj|
-  "#{obj.get(:title)} #{obj.get(:first_name)} #{obj.get(:last_name)}"
-end#.depends_on :title, :first_name, :last_name
-
-bill_meta.deps[:first_name] = [:full_name]
-bill_meta.deps[:last_name] = [:full_name]
-bill_meta.deps[:title] = [:full_name]
-
-MetaStore.set(bill, bill_meta)
-
-bill.set(:title, "Dr")
-p bill.get(:full_name)
-
-# pull in prop management into magic helpers
-# add prop cache, bust for monkey patching
-# serialization?
-
 
 
 

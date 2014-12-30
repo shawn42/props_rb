@@ -100,7 +100,6 @@ module PropsRb
       end
       object
     end
-
   end
 
   class Meta
