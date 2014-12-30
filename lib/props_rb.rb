@@ -1,31 +1,61 @@
-require "props_rb/version"
-
 require 'awesome_print'
 require 'active_support/core_ext/hash/indifferent_access'
 require 'pry'
 
+require_relative "./props_rb/version"
+require_relative "./props_rb/parental_hash"
+require_relative "./props_rb/stores"
+require_relative "./props_rb/meta"
+require_relative "./props_rb/prop"
+
+
 module PropsRb
-  class Store
-    # not liking that the store is class-aware
-    def self.initialize_meta(key)
-      @meta ||= {}
-      @meta[key] = Meta.new
+  module ClassMethods
+    def prop(prop_name, &blk)
+      parents = ancestors.select{|a|a.is_a? Class}
+      propped_klass = parents.find do |parent_klass|
+        MetaStore.get parent_klass
+      end
+      meta = MetaStore.get(propped_klass)
+
+      if $VERBOSE
+        warn "TODO raise error if meta not found"
+        warn "TODO: clear all instances cache for [#{prop_name}]"
+      end
+      meta.properties[prop_name] = Prop.new(prop_name, &blk)
+      meta.properties[prop_name]
     end
 
-    def self.meta_for(key)
-      @meta ||= {}
-      @meta[key]
+    def create(initial_props={})
+      object = self.new
+      object.initialize_props
+      initial_props.each do |name, value|
+        object.set(name, value)
+      end
+      object
     end
 
-    def self.destroy(key)
-      @meta ||= {}
-      @meta.delete key
+    def destroy
+      DataStore.delete self.object_id
+      CacheStore.delete self.object_id
+      MetaStore.delete self.object_id
     end
   end
 
+  def self.included(klass)
+    klass.extend ClassMethods
+    parents = klass.ancestors.select{|a|a.is_a? Class}[1..-1]
+    propped_klass = parents.find do |parent_klass|
+      MetaStore.get(parent_klass)
+    end
+    parent_meta = MetaStore.get(propped_klass)
+    meta = Meta.new parent_meta
+    MetaStore.set(klass, meta)
+  end
+
   def initialize_props
-    Store.initialize_meta(self)
-    meta = Store.meta_for self
+    meta = Meta.new(MetaStore.get(self.class))
+    MetaStore.set(self.object_id, meta)
     props = meta.properties
     props.each do |name, prop|
       deps = prop.deps
@@ -37,103 +67,51 @@ module PropsRb
     props
   end
 
-  def destroy
-    Store.destroy(self)
+  def prop(prop_name, *deps, &blk)
+    meta = MetaStore.get(self.object_id)
+    CacheStore.delete self.object_id, prop_name
+    prop = Prop.new(prop_name, &blk)
+    meta.properties[prop_name] = prop
+
+    deps.each do |dep|
+      meta.deps[dep] ||= []
+      meta.deps[dep] << prop_name
+    end
+
+    prop
   end
 
-  def get(name)
-    meta = Store.meta_for(self)
-    return if meta.nil?
-    prop = meta.properties[name]
-    return if prop.nil?
+  def set(k,v)
+    DataStore.set(self.object_id, k, v)
+    CacheStore.set(self.object_id, k, v)
 
-    if prop.computed?
-      if meta.cache.has_key? name
-        meta.cache[name]
-      else
-        meta.cache[name] = prop.compute self
+    meta = MetaStore.get(self.object_id) || MetaStore.get(self.class)
+    deps = meta.deps[k]
+    if deps
+      deps.each do |dep|
+        CacheStore.delete(self.object_id, dep)
       end
+    end
+
+    v
+  end
+
+  def get(k)
+    has_cached_value = CacheStore.has_key?(self.object_id, k)
+    if has_cached_value
+      return CacheStore.get(self.object_id, k)
+    end
+
+    meta = MetaStore.get(self.object_id) || MetaStore.get(self.class)
+    property_meta = meta.properties[k]
+    binding.pry if !property_meta.respond_to?(:computed?)
+    val = if property_meta.computed?
+      property_meta.compute self
     else
-      meta.values[name]
-    end
-  end
-
-  def set(name, value)
-    meta = Store.meta_for(self)
-    return if meta.nil?
-    prop = meta.properties[name]
-    return if prop.nil?
-
-    if prop.computed?
-      raise "cannot set computed property"
-    else
-      if meta.values[name] != value
-        meta.deps[name].each do |prop_name|
-          meta.cache.delete prop_name
-        end
-        meta.values[name] = value
-      end
-    end
-  end
-
-  module SharedMethods
-    def prop(prop_name, &blk)
-      meta = Store.meta_for(self) || Store.initialize_meta(self)
-      meta.properties[prop_name] = Prop.new(prop_name, &blk)
-      meta.properties[prop_name]
-    end
-  end
-
-  def self.included(klass)
-    klass.extend ClassMethods
-    klass.include SharedMethods
-    Store.initialize_meta(klass)
-  end
-
-  module ClassMethods
-    include SharedMethods
-    def create(initial_props={})
-      object = self.new
-      object.initialize_props
-      initial_props.each do |name, value|
-        object.set(name, value)
-      end
-      object
-    end
-  end
-
-  class Meta
-    attr_accessor :properties, :values, :cache, :deps
-    def initialize
-      @properties = HashWithIndifferentAccess.new
-      @values = HashWithIndifferentAccess.new
-      @cache = HashWithIndifferentAccess.new
-      @deps = HashWithIndifferentAccess.new
-    end
-  end
-
-  class Prop
-    attr_reader :name
-    def initialize(name, &blk)
-      @name = name
-      @blk = blk
+      DataStore.get(self.object_id, k)
     end
 
-    def computed?
-      !@blk.nil?
-    end
-
-    def compute(target)
-      @blk.call target
-    end
-
-    def depends_on(*dep_names)
-      @dep_names = dep_names
-    end
-
-    def deps
-      @dep_names || []
-    end
+    CacheStore.set(self.object_id, k, val)
+    val
   end
 end
-

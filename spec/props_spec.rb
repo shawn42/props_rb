@@ -1,5 +1,4 @@
-require_relative '../lib/test'
-# require_relative '../lib/props_rb'
+require_relative '../lib/props_rb'
 
 describe "Props.rb" do
   let(:person_klass) { Class.new do
@@ -66,12 +65,12 @@ describe "Props.rb" do
   describe 'per instance props' do
     it 'can add prop to instance' do
       billy = person_klass.create first_name: "Billy", last_name: "Bob"
-      billy.prop :wah do |obj|
+      billy.prop :wah, :first_name do |obj|
         "#{obj.get(:first_name)} monkey"
-      end.depends_on(:first_name)
+      end#.depends_on(:first_name)
       expect(billy.get(:wah)).to eq("Billy monkey")
       billy.set(:first_name, "William")
-      CacheStore.delete billy.object_id, :wah
+      # PropsRb::CacheStore.delete billy.object_id, :wah
       expect(billy.get(:wah)).to eq("William monkey")
     end
 
